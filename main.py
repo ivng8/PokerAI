@@ -1,5 +1,5 @@
-from poker_engine_corrected import PokerEngine
-from mccfr_corrected import MCCFR
+from poker_engine import PokerEngine
+from mccfr import MCCFR
 
 def main():
     # Initialize PokerEngine and MCCFR
@@ -11,7 +11,7 @@ def main():
     log_frequency = 10000  # Log progress every 100,000 iterations
 
     # Training loop
-    for iteration in range(1, iterations + 1):
+    for iteration in range(iterations):
         state = engine.initial_state()
         mccfr.cfr(state, iteration)
 

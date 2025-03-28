@@ -1,6 +1,6 @@
 import unittest
 from hand_evaluator import HandEvaluator, Card
-from poker_engine_corrected import PokerEngine
+from poker_engine import PokerEngine
 
 class TestHandEvaluator(unittest.TestCase):
     def setUp(self):
