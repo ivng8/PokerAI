@@ -20,8 +20,7 @@ class Deck:
     def deal(self):
         return self.cards.pop()
     
-    def len(self):
-        return len(self.cards)
-    
-    def get_str(self):
-        return f"Deck({len(self.cards)} cards)"
+    def clone(self):
+        new_deck = Deck()
+        new_deck.cards = [card.clone() for card in self.cards]
+        return new_deck

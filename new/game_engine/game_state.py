@@ -15,9 +15,9 @@ import numpy as np # For NaN/Inf checks
 
 # Path setup / Absolute Imports
 try:
-    from organized_poker_bot.game_engine.deck import Deck
-    from organized_poker_bot.game_engine.card import Card
-    from organized_poker_bot.game_engine.hand_evaluator import HandEvaluator
+    from game_engine.deck import Deck
+    from game_engine.card import Card
+    from game_engine.hand_evaluator import HandEvaluator
 except ImportError as e:
     print(f"ERROR importing engine components in GameState: {e}")
     sys.exit(1)

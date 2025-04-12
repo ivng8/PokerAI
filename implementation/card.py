@@ -12,18 +12,6 @@ class Card:
     def __init__(self, rank, suit):
         self.rank = rank
         self.suit = suit
-
-    def get_rank(self):
-        return self.RANKS[self.rank]
     
-    def get_suit(self):
-        return self.SUITS[self.suit]
-    
-    def copy(self):
+    def clone(self):
         return Card(self.rank, self.suit)
-    
-    def is_equal(self, other):
-        return self.rank == other.rank and self.suit == other.suit
-    
-    def get_str(self):
-        return f"{self.get_rank()}{self.get_suit()}"
