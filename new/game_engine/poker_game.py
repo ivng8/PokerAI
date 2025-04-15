@@ -44,7 +44,7 @@ class PokerGame:
         self.game_state = None
         self.hand_history = []
         self.interactive = interactive
-        # Removed starting print message
+        # Removed starting print f
 
     def get_position_name(self, player_idx, dealer_idx, num_players):
         """ Gets the standard position name for a player. """

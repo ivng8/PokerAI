@@ -1,5 +1,8 @@
+import traceback
+import numpy as np
 from deck import Deck
 from hand_eval import HandEvaluator
+from copy import deepcopy
 
 class GameState:
     PREFLOP, FLOP, TURN, RIVER, SHOWDOWN, HAND_OVER = 0, 1, 2, 3, 4, 5
@@ -32,53 +35,42 @@ class GameState:
         self.verbose_debug = False
         
     def next_active_player(self, start_idx):
-        if not self.active_players or self.num_players == 0: return None
-        valid_start = start_idx if 0 <= start_idx < self.num_players else -1
+        if not self.active_players: 
+            return None
+        valid_start = -1
+        if 0 <= start_idx < self.num_players:
+            valid_start = start_idx
         current_idx = (valid_start + 1) % self.num_players
-        search_start_idx = current_idx # Track start of search loop
-
-        for _ in range(self.num_players * 2): # Limit loops to avoid infinite
-             # Check if player index is valid and player is actually active and has chips
-             if current_idx in self.active_players and \
-                0 <= current_idx < len(self.player_stacks) and \
-                self.player_stacks[current_idx] > 0.01 and \
-                not self.player_folded[current_idx]: # Double check not folded
-                 return current_idx # Found next active player
-
-             current_idx = (current_idx + 1) % self.num_players
-             if current_idx == search_start_idx: # Have we looped completely?
-                  # print(f"DEBUG _get_next_active: Looped from {start_idx}, ended at {current_idx}") # DEBUG
-                  break # Exit loop if we made a full circle
-
-        # print(f"DEBUG _get_next_active: FAILED from {start_idx}, returning None") # DEBUG
-        return None # No active player found
-
-    def _find_player_relative_to_dealer(self, offset):
-        if not self.active_players or self.num_players == 0: return None
-        dealer = self.dealer_position % self.num_players
-        start_idx = (dealer + offset) % self.num_players
-        current_idx = start_idx
-        search_start_idx = current_idx # Track start of search loop
+        search_start_idx = current_idx
 
         for _ in range(self.num_players * 2):
-            # Check if player index valid, active, and has chips (NO folded check needed here, just find POTENTIAL seat)
-            if current_idx in self.active_players and \
-               0 <= current_idx < len(self.player_stacks) and \
-               self.player_stacks[current_idx] > 0.01:
-                 return current_idx # Found an active player at relative position
+            if current_idx in self.active_players and self.player_stacks[current_idx] > 0.01 and not self.player_folded[current_idx]:
+                 return current_idx
 
             current_idx = (current_idx + 1) % self.num_players
-            if current_idx == search_start_idx: # Have we looped?
-                 # print(f"DEBUG _find_relative: Looped for offset {offset}, Dlr={dealer}, start={start_idx}") # DEBUG
-                 break
+            if current_idx == search_start_idx:
+                break
 
-        # print(f"DEBUG _find_relative: FAILED for offset {offset}, Dlr={dealer}, returning None") # DEBUG
-        return None # No suitable player found
+        return None
 
-    # --- Hand Setup Methods ---
+    def offset_from_dealer(self, offset):
+        if not self.active_players: 
+            return None
+        start_idx = (self.dealer_position + offset) % self.num_players
+        current_idx = start_idx
+        search_start_idx = current_idx
+
+        for _ in range(self.num_players * 2):
+            if current_idx in self.active_players and self.player_stacks[current_idx] > 0.01:
+                return current_idx
+
+            current_idx = (current_idx + 1) % self.num_players
+            if current_idx == search_start_idx:
+                break
+
+        return None
+
     def start_new_hand(self, dealer_pos, player_stacks):
-        """ Sets up the game state for the beginning of a new hand. """
-        # Reset hand-specific state
         self.hole_cards = [[] for _ in range(self.num_players)]
         self.community_cards = []
         self.pot = 0.0
@@ -94,277 +86,155 @@ class GameState:
         self.players_acted_this_round = set()
         self.action_sequence = []
         self.raise_count_this_street = 0
-
-        # Set game parameters for this hand
         self.dealer_position = dealer_pos % self.num_players
         self.deck = Deck()
         self.deck.shuffle()
-
-        # Update player stacks and determine active players for *this* hand
-        if len(player_stacks) != self.num_players:
-             raise ValueError("Provided player_stacks length does not match num_players")
         self.player_stacks = [float(s) for s in player_stacks]
-        # Active players are those with chips at the start of the hand
         self.active_players = [i for i, s in enumerate(self.player_stacks) if s > 0.01]
 
-        # Proceed with dealing and blinds if enough players
-        if len(self.active_players) >= 2:
-            self._deal_hole_cards()
-            # Check if dealing failed (e.g., deck empty)
-            if self.betting_round == self.HAND_OVER: return
-            self._post_blinds()
-            # Check if posting blinds failed (or only one player left)
-            if self.betting_round == self.HAND_OVER: return
-            self._start_betting_round()
-        else: # Not enough active players
+        if len(self.active_players) > 1:
+            self.deal_hole()
+            if self.betting_round == self.HAND_OVER:
+                return
+            self.put_blinds()
+            if self.betting_round == self.HAND_OVER:
+                return
+            self.start_bets()
+        else:
             self.betting_round = self.HAND_OVER
             self.current_player_idx = -1
 
-    def _deal_hole_cards(self):
-        """ Deals two cards to each active player. """
-        if len(self.active_players) < 2: # Cannot deal if fewer than 2 players with stacks
+    def deal_hole(self):
+        if len(self.active_players) < 2:
             self.betting_round = self.HAND_OVER
             return
 
-        # Determine starting player for dealing (player after dealer)
-        # Use _find_player_relative_to_dealer to find first player with chips
-        start_player = self._find_player_relative_to_dealer(1)
-        if start_player is None: # Should not happen if len(active_players) >= 2
-            print("ERROR: Could not find starting player for dealing hole cards.")
-            self.betting_round = self.HAND_OVER
-            return
-
-        # Deal cards one at a time
+        start_player = self.offset_from_dealer(1)
         current_deal_idx = start_player
-        for card_num in range(2): # Deal the first card, then the second
-            players_dealt_this_pass = 0
-            start_loop_idx = current_deal_idx
-            attempts = 0
-            # Loop until every active player gets their card for this pass
-            while players_dealt_this_pass < len(self.active_players) and attempts < self.num_players * 2:
-                # Check if current index is an active player
-                if 0 <= current_deal_idx < self.num_players and current_deal_idx in self.active_players:
-                    # Ensure hole_cards list exists (should be handled by __init__)
-                    # Deal if player needs this card number
-                    if len(self.hole_cards[current_deal_idx]) == card_num:
-                        if not self.deck: # Check if deck is empty
-                            print("ERROR: Deck empty during hole card deal.")
-                            self.betting_round = self.HAND_OVER
-                            return # Cannot deal
-                        self.hole_cards[current_deal_idx].append(self.deck.deal())
-                        players_dealt_this_pass += 1
+        for _ in range(2):
+            for _ in range(len(self.num_players)):
+                if current_deal_idx in self.active_players:
+                    self.hole_cards[current_deal_idx].append(self.deck.deal())
 
-                # Move to the next player index
                 current_deal_idx = (current_deal_idx + 1) % self.num_players
-                attempts += 1
-                # Prevent infinite loop if logic fails
-                if attempts >= self.num_players * 2:
-                    print(f"ERROR: Stuck dealing hole card pass {card_num+1}")
-                    self.betting_round = self.HAND_OVER
-                    return
 
-            # Check if correct number of players were dealt a card this pass
-            if players_dealt_this_pass != len(self.active_players):
-                 print(f"ERROR: Incorrect number of players dealt card pass {card_num+1}")
-                 self.betting_round = self.HAND_OVER
-                 return
-            # After dealing one card to everyone, the next card starts at the same index
-
-    def _deduct_bet(self, player_idx, amount_to_deduct):
-        """ Internal helper to deduct bet, update pot/state. Returns actual amount deducted. """
-        if not (0 <= player_idx < self.num_players and amount_to_deduct >= 0):
-            # print(f"WARN _deduct_bet: Invalid input P{player_idx}, Amt={amount_to_deduct}")
-            return 0.0 # Invalid input
-
-        # Determine actual amount (capped by stack)
+    def deduct_bet(self, player_idx, amount_to_deduct):
         actual_deduction = min(amount_to_deduct, self.player_stacks[player_idx])
-        if actual_deduction < 0.01: # Don't process negligible amounts
+        if actual_deduction < 0.01:
             return 0.0
 
-        # Apply deduction and update state
         self.player_stacks[player_idx] -= actual_deduction
         self.player_bets_in_round[player_idx] += actual_deduction
         self.player_total_bets_in_hand[player_idx] += actual_deduction
         self.pot += actual_deduction
 
-        # Check if player went all-in
-        # Use a small tolerance for floating point comparisons
         if abs(self.player_stacks[player_idx]) < 0.01:
             self.player_all_in[player_idx] = True
 
         return actual_deduction
 
-    def _post_blinds(self):
-        """ Posts small and big blinds based on dealer position and active players. """
-        if len(self.active_players) < 2: # Need 2+ for blinds
-            self.betting_round = self.HAND_OVER # Not enough players left
+    def put_blinds(self):
+        if len(self.active_players) < 2:
+            self.betting_round = self.HAND_OVER
             return
 
         sb_player, bb_player = None, None
-        # Determine SB and BB based on num players
-        if len(self.active_players) == 2: # HU: Dealer=SB, other=BB (use relative finder)
-            # In HU, _find_player_relative_to_dealer(0) finds dealer if they have chips
-            # _find_player_relative_to_dealer(1) finds the other player if they have chips
-            sb_player = self._find_player_relative_to_dealer(0)
-            bb_player = self._find_player_relative_to_dealer(1)
-            # If someone was busted exactly on previous hand, finder might return None
+        if len(self.active_players) == 2:
+            sb_player = self.offset_from_dealer(0)
+            bb_player = self.offset_from_dealer(1)
             if sb_player is None or bb_player is None:
-                 # This implies only one player remains, handled by the initial check
-                 self.betting_round = self.HAND_OVER
-                 return
-        else: # 3+ players: Normal positions relative to dealer
-            sb_player = self._find_player_relative_to_dealer(1)
-            bb_player = self._find_player_relative_to_dealer(2)
-            # Handle cases where blinds might be missing (e.g., player busted)
+                self.betting_round = self.HAND_OVER
+                return
+        else:
+            sb_player = self.offset_from_dealer(1)
+            bb_player = self.offset_from_dealer(2)
             if sb_player is None or bb_player is None:
-                 print("ERROR: Cannot find SB or BB position.")
-                 self.betting_round = self.HAND_OVER
-                 return
-            # Ensure SB and BB are distinct if possible
+                self.betting_round = self.HAND_OVER
+                return
             if sb_player == bb_player:
-                 print("ERROR: SB and BB positions are the same.")
-                 self.betting_round = self.HAND_OVER
-                 return
+                self.betting_round = self.HAND_OVER
+                return
 
-        self.raise_count_this_street = 0 # Reset preflop raise count
+        self.raise_count_this_street = 0
+        sb_amount = min(self.small_blind, self.player_stacks[sb_player])
+        sb_posted_amount = self.deduct_bet(sb_player, sb_amount)
+        if sb_posted_amount > 0.01:
+            self.action_sequence.append(f"P{sb_player}:sb{int(round(sb_posted_amount))}")
 
-        # Post Small Blind
-        sb_posted_amount = 0.0
-        if sb_player is not None: # Check if SB position was found
-             sb_amount_to_post = min(self.small_blind, self.player_stacks[sb_player])
-             sb_posted_amount = self._deduct_bet(sb_player, sb_amount_to_post)
-             if sb_posted_amount > 0.01:
-                  self.action_sequence.append(f"P{sb_player}:sb{int(round(sb_posted_amount))}")
+        bb_amount_to_post = min(self.big_blind, self.player_stacks[bb_player])
+        bb_posted_amount = self.deduct_bet(bb_player, bb_amount_to_post)
+        if bb_posted_amount > 0.01:
+            log_bb_amt = self.player_bets_in_round[bb_player]
+            self.action_sequence.append(f"P{bb_player}:bb{int(round(log_bb_amt))}")
 
-        # Post Big Blind
-        bb_posted_amount = 0.0
-        if bb_player is not None: # Check if BB position was found
-             bb_amount_to_post = min(self.big_blind, self.player_stacks[bb_player])
-             bb_posted_amount = self._deduct_bet(bb_player, bb_amount_to_post)
-             if bb_posted_amount > 0.01:
-                 # Log total amount IN POT for round after BB post
-                 log_bb_amt = self.player_bets_in_round[bb_player]
-                 self.action_sequence.append(f"P{bb_player}:bb{int(round(log_bb_amt))}")
-
-        # Set initial betting level and raiser state
-        self.current_bet = self.big_blind # Minimum amount to call is BB level
-        self.last_raise = self.big_blind # Reference for minimum raise size is initially BB size
-        if bb_player is not None and bb_posted_amount >= self.big_blind - 0.01:
-             # If BB posted full amount (or went all-in for at least BB)
-             self.last_raiser = bb_player
-             self.raise_count_this_street = 1 # BB post counts as the first 'raise'
-        elif sb_player is not None and sb_posted_amount > 0.01: # Fallback if BB short/missing
+        self.current_bet = self.big_blind
+        self.last_raise = self.big_blind
+        if bb_posted_amount >= self.big_blind - 0.01:
+            self.last_raiser = bb_player
+            self.raise_count_this_street = 1
+        elif sb_posted_amount > 0.01:
             self.last_raiser = sb_player
-            self.current_bet = sb_posted_amount # Current bet is only SB amount
-            self.last_raise = sb_posted_amount # Next raise must be at least this much more
-            self.raise_count_this_street = 1 # SB post counts as first 'raise'
-        else: # No effective 'raise' if neither could post significant blind
+            self.current_bet = sb_posted_amount
+            self.last_raise = sb_posted_amount
+            self.raise_count_this_street = 1
+        else:
             self.last_raiser = None
-            self.current_bet = 0.0 # No bet to call yet
-            self.last_raise = self.big_blind # Next aggression must be at least BB
+            self.current_bet = 0.0
+            self.last_raise = self.big_blind
             self.raise_count_this_street = 0
 
-
-    # --- Round Progression ---
-    def _start_betting_round(self):
-        """ Initializes state for the start of a new betting round (post-flop or finds first actor pre-flop). """
-        # Reset round-specific state post-flop
+    def start_bets(self):
         if self.betting_round != self.PREFLOP:
             self.current_bet = 0.0
             self.last_raiser = None
-            self.last_raise = self.big_blind # Minimum bet/raise size based on BB post-flop
+            self.last_raise = self.big_blind
             self.raise_count_this_street = 0
-            # Clear bets *in this round*
             self.player_bets_in_round = [0.0] * self.num_players
 
-        self.players_acted_this_round = set() # Clear who acted this round
+        self.players_acted_this_round = set()
         first_player_to_act = None
 
         if self.betting_round == self.PREFLOP:
-             # Find player after BB to act first
-             if len(self.active_players) == 2: # HU: Dealer/SB acts first preflop
-                 first_player_to_act = self._find_player_relative_to_dealer(0)
-             else: # 3+ players: Player after BB acts first (UTG)
-                 bb_player = self._find_player_relative_to_dealer(2)
-                 # Start search from player after BB
-                 first_player_to_act = self.next_active_player(bb_player if bb_player is not None else self.dealer_position)
-        else: # Postflop rounds: First active Player left of dealer acts first
+            if len(self.active_players) == 2:
+                first_player_to_act = self.offset_from_dealer(0)
+            else:
+                bb_player = self.offset_from_dealer(2)
+                first_player_to_act = self.next_active_player(bb_player if bb_player is not None else self.dealer_position)
+        else:
             first_player_to_act = self.next_active_player(self.dealer_position)
         if first_player_to_act is None:
-             print(f"!!! WARN _start_betting_round: FAILED to find first_player_to_act (Rnd={self.betting_round}, Dlr={self.dealer_position}, Active={self.active_players}, Stacks={self.player_stacks})")
-             self.current_player_idx = -1
+            self.current_player_idx = -1
         else:
-             # print(f"    DEBUG _start: Setting current_player_idx = {first_player_to_act}")
-             self.current_player_idx = first_player_to_act
-        # Set current player index
+            self.current_player_idx = first_player_to_act
         self.current_player_idx = first_player_to_act if first_player_to_act is not None else -1
 
-        # Check if betting can occur or should be skipped immediately
-        if self._check_all_active_are_allin():
-             # print(f"DEBUG _start_betting_round: Skipping betting, players all-in. Round: {self.betting_round}")
-             self.current_player_idx = -1 # Skip betting if <=1 player can act
+        if self.check_all_shoved():
+            self.current_player_idx = -1
 
 
-    def _deal_community_card(self, burn=True):
-        """ Deals one card, optionally burning. Returns True if successful. """
+    def deal_board(self, burn=True):
         if burn:
-            if not self.deck: return False # Cannot burn if empty
-            self.deck.deal() # Burn card
-        if not self.deck: return False # Cannot deal if empty
+            self.deck.deal()
         self.community_cards.append(self.deck.deal())
-        return True
 
     def deal_flop(self):
-        """ Deals the flop cards. """
-        # Need 4 cards: Burn + 3 Flop
-        if len(self.community_cards) != 0 or len(self.deck) < 4:
-            self.betting_round = self.HAND_OVER; return False
-        try:
-            self.deck.deal() # Burn card first
-            # Deal 3 flop cards without burning between them
-            if not all(self._deal_community_card(False) for _ in range(3)):
-                raise RuntimeError("Deck ran out during flop deal")
-            self.betting_round = self.FLOP # Advance round state
-            self._start_betting_round() # Find next player, unless all-in check skips turn
-            return True
-        except Exception as e:
-             print(f"ERROR dealing flop: {e}")
-             self.betting_round = self.HAND_OVER; return False
+        self.deck.deal()
+        for _ in range(3):
+            self.deal_board(False)
+        self.betting_round = self.FLOP
+        self.start_bets()
 
     def deal_turn(self):
-        """ Deals the turn card. """
-        # Need 2 cards: Burn + Turn
-        if len(self.community_cards) != 3 or len(self.deck) < 2:
-            self.betting_round = self.HAND_OVER; return False
-        try:
-            if not self._deal_community_card(True): # Burn and Deal
-                raise RuntimeError("Deck ran out during turn deal")
-            self.betting_round = self.TURN # Advance round state
-            self._start_betting_round()
-            return True
-        except Exception as e:
-             print(f"ERROR dealing turn: {e}")
-             self.betting_round = self.HAND_OVER; return False
+        self.deal_board(True)
+        self.betting_round = self.TURN
+        self.start_bets()
 
     def deal_river(self):
-        """ Deals the river card. """
-         # Need 2 cards: Burn + River
-        if len(self.community_cards) != 4 or len(self.deck) < 2:
-            self.betting_round = self.HAND_OVER; return False
-        try:
-            if not self._deal_community_card(True): # Burn and Deal
-                 raise RuntimeError("Deck ran out during river deal")
-            self.betting_round = self.RIVER # Advance round state
-            self._start_betting_round()
-            return True
-        except Exception as e:
-             print(f"ERROR dealing river: {e}")
-             self.betting_round = self.HAND_OVER; return False
+        self.deal_board(True)
+        self.betting_round = self.RIVER 
+        self.start_bets()
 
-    def _check_all_active_are_allin(self):
-        """ Checks if <=1 player is NOT folded AND NOT all-in. """
-        # Active players list now only contains non-folded players with chips at start_new_hand
-        # Need to re-evaluate based on current folded/all_in status
+    def check_all_shoved(self):
         non_folded_players = [p for p in range(self.num_players) if not self.player_folded[p]]
 
         if len(non_folded_players) <= 1:
@@ -504,7 +374,7 @@ class GameState:
             else: # Actual call needed
                 call_cost = min(amount_needed, player_stack)
                 if call_cost < 0: call_cost = 0 # Safety
-                self._deduct_bet(p_idx, call_cost)
+                self.deduct_bet(p_idx, call_cost)
                 # Log total amount IN POT for round after call
                 action_log_repr += f"c{int(round(self.player_bets_in_round[p_idx]))}"
 
@@ -528,7 +398,7 @@ class GameState:
                 raise ValueError(f"Bet {actual_bet_cost:.2f} is less than minimum {min_bet_amount:.2f}")
 
             # Apply bet
-            self._deduct_bet(p_idx, actual_bet_cost)
+            self.deduct_bet(p_idx, actual_bet_cost)
             action_log_repr += f"b{int(round(actual_bet_cost))}" # Log the bet cost
 
             # Update betting state: New level is the bet size, player is last raiser
@@ -575,7 +445,7 @@ class GameState:
                 raise ValueError(f"Raise increment {actual_increment_made:.2f} is less than minimum legal increment {min_legal_increment:.2f}")
 
             # Apply the raise cost
-            self._deduct_bet(p_idx, actual_raise_cost)
+            self.deduct_bet(p_idx, actual_raise_cost)
             # Log the TOTAL amount reached after the raise
             action_log_repr += f"r{int(round(actual_total_bet_reached))}"
 
@@ -782,8 +652,8 @@ class GameState:
             # Determine BB player index robustly
             bb_player_idx = None
             if len(self.active_players) >= 2: # Need active_players list from start_new_hand
-                 if len(self.active_players) == 2: bb_player_idx = self._find_player_relative_to_dealer(1)
-                 else: bb_player_idx = self._find_player_relative_to_dealer(2)
+                 if len(self.active_players) == 2: bb_player_idx = self.offset_from_dealer(1)
+                 else: bb_player_idx = self.offset_from_dealer(2)
 
             is_bb_player = (the_player == bb_player_idx)
             # Check if only blinds have been posted (no re-raise occurred)
@@ -826,7 +696,7 @@ class GameState:
             return # Hand is over
 
         # Check if betting is skipped because players are all-in
-        should_skip_betting = self._check_all_active_are_allin()
+        should_skip_betting = self.check_all_shoved()
 
         if should_skip_betting and self.betting_round < self.SHOWDOWN:
             # Deal remaining streets without betting if players are all-in
@@ -1093,41 +963,3 @@ class GameState:
         """ Creates a deep copy of the game state. """
         # Using deepcopy is generally safest for complex objects with nested structures
         return deepcopy(self)
-
-    def get_position(self, player_idx):
-        """ Calculates the position relative to the dealer (0=dealer, 1=SB, etc.). """
-        if not (0 <= player_idx < self.num_players) or self.num_players <= 1:
-            return -1 # Invalid input or not meaningful
-        # Position relative to dealer (dealer is pos 0)
-        return (player_idx - self.dealer_position + self.num_players) % self.num_players
-
-    def __str__(self):
-        """ Provides a string representation of the current game state. """
-        round_name = self.ROUND_NAMES.get(self.betting_round, f"R{self.betting_round}")
-        turn = f"P{self.current_player_idx}" if self.current_player_idx != -1 else "None"
-        board = ' '.join(map(str, self.community_cards)) if self.community_cards else "-"
-        # Limit history length for display
-        hist_limit = 60
-        hist = self.get_betting_history()
-        hist_display = f"...{hist[-hist_limit:]}" if len(hist) > hist_limit else hist
-
-        lines = []
-        lines.append(f"Round: {round_name}, Turn: {turn}, Pot: {self.pot:.2f}, Board: [{board}]")
-
-        for i in range(self.num_players):
-            # Check bounds before accessing player state
-            if i < len(self.player_stacks) and i < len(self.player_folded) and i < len(self.player_all_in) and i < len(self.player_bets_in_round):
-                state_flags = []
-                if i == self.dealer_position: state_flags.append("D")
-                if self.player_folded[i]: state_flags.append("F")
-                if self.player_all_in[i]: state_flags.append("A")
-                state_str = "".join(state_flags) if state_flags else " "
-                # Format numbers nicely
-                stack_str = f"{self.player_stacks[i]:.0f}"
-                bet_str = f"{self.player_bets_in_round[i]:.0f}"
-                lines.append(f" P{i}[{state_str}]: Stack={stack_str}, Bet(Round)={bet_str}")
-            else:
-                lines.append(f" P{i}: Invalid State Data")
-
-        lines.append(f" History: {hist_display}")
-        return "\n".join(lines)
