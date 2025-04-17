@@ -211,7 +211,7 @@ class DepthLimitedSearch:
                  # Try to move to the next player safely
                  original_idx = current_player_idx
                  try:
-                     sim_state._move_to_next_player() # This should modify sim_state in place
+                     sim_state.rotate_turn() # This should modify sim_state in place
                  except Exception as move_err:
                      # print(f"WARN DLS Simulate: Error moving to next player: {move_err}")
                      return 0.0 # Cannot proceed
@@ -393,7 +393,7 @@ class DepthLimitedSearch:
                 # Try to move to the next player safely
                 original_idx = current_player_idx
                 try:
-                    sim_state._move_to_next_player() # Modifies sim_state
+                    sim_state.rotate_turn() # Modifies sim_state
                 except Exception as move_err:
                     # print(f"WARN DLS Rollout: Error moving to next player: {move_err}. Ending rollout.")
                     break # Cannot proceed

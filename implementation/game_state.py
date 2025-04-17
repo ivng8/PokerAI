@@ -238,386 +238,171 @@ class GameState:
         non_folded_players = [p for p in range(self.num_players) if not self.player_folded[p]]
 
         if len(non_folded_players) <= 1:
-             # Hand is over or uncontested if 0 or 1 player is not folded
-             return True
+            return True
 
-        # Count players who can still potentially bet/raise/fold voluntarily
         count_can_still_act_voluntarily = 0
         for p_idx in non_folded_players:
-             # Check bounds just in case
-             if 0 <= p_idx < self.num_players and \
-                p_idx < len(self.player_all_in) and \
-                p_idx < len(self.player_stacks):
-                  if not self.player_all_in[p_idx] and self.player_stacks[p_idx] > 0.01:
-                       count_can_still_act_voluntarily += 1
+            if not self.player_all_in[p_idx]:
+                count_can_still_act_voluntarily += 1
 
-        # If 0 or 1 player can make a decision, betting should stop
         return count_can_still_act_voluntarily <= 1
 
-    def _move_to_next_player(self):
-        """ Finds next active player index who can act, handles no player found. Modifies self.current_player_idx """
+    def rotate_turn(self):
         if self.current_player_idx != -1:
-            next_p_idx = self.next_active_player(self.current_player_idx)
-            # Set to -1 if no next active player is found (e.g., everyone else folded/all-in)
-            self.current_player_idx = next_p_idx if next_p_idx is not None else -1
-        # If current_player_idx was already -1, it stays -1
+            next_player = self.next_active_player(self.current_player_idx)
+            if next_player is not None:
+                self.current_player_idx = next_player  
+            else:
+                self.current_player_idx = -1
 
-
-    # --- Action Handling ---
     def apply_action(self, action):
-        """ Validates and applies action to a clone, returns new state. """
-        if not isinstance(action, tuple) or len(action) != 2:
-            raise ValueError(f"Action must be a tuple of length 2: {action}")
         action_type, amount_input = action
-
-        # Validate amount format early
-        amount = 0.0
-        try:
-             # Allow numeric types directly or strings that can be converted
-             if isinstance(amount_input, (int, float)) and not (np.isnan(amount_input) or np.isinf(amount_input)):
-                 amount = float(amount_input)
-             else:
-                  # Try converting string, handle potential errors
-                  amount = float(amount_input)
-             if amount < 0:
-                  raise ValueError("Action amount cannot be negative")
-        except (ValueError, TypeError):
-             raise ValueError(f"Invalid action amount format or value: {amount_input}")
-
+        amount = float(amount_input)
+        
         acting_player_idx = self.current_player_idx
-
-        # Validate player turn and state before cloning
-        if acting_player_idx == -1:
-            raise ValueError("Invalid action: No player's turn indicated")
-        if not (0 <= acting_player_idx < self.num_players):
-             raise ValueError(f"Invalid acting_player_idx: {acting_player_idx}")
-        # Check list bounds for safety
-        if acting_player_idx >= len(self.player_folded) or \
-           acting_player_idx >= len(self.player_all_in) or \
-           acting_player_idx >= len(self.player_stacks):
-            raise ValueError(f"Player index {acting_player_idx} out of bounds for state lists")
-        if self.player_folded[acting_player_idx]:
-             raise ValueError(f"Invalid action: Player {acting_player_idx} has already folded")
         if self.player_all_in[acting_player_idx]:
-             # If player is already all-in, they cannot act. Just advance turn check.
-             new_state_skip = self.clone() # Clone state
-             new_state_skip._move_to_next_player() # Move turn indicator
-             # Check if round/hand ended after skipping the all-in player
-             if new_state_skip._is_betting_round_over():
-                  new_state_skip._try_advance_round()
-             return new_state_skip # Return the advanced state
+            new_state_skip = self.clone()
+            new_state_skip.rotate_turn()
+            if new_state_skip.betting_done():
+                new_state_skip.move_round()
+            return new_state_skip
 
-        # Clone the state BEFORE applying the action logic
         new_state = self.clone()
+        new_state.action_logic(acting_player_idx, action_type, amount)
 
-        try:
-            # Apply the logic (MUTATES the clone 'new_state')
-            new_state._apply_action_logic(acting_player_idx, action_type, amount)
-        except ValueError as e:
-            # Add more context to the error if needed
-            # print(f"ERROR apply_action P{acting_player_idx} action={action}: {e}")
-            raise # Re-raise validation error to stop bad processing
-
-        # After action logic potentially modifies state (like setting hand_over),
-        # check if betting round is over on the clone
-        if new_state._is_betting_round_over():
-            new_state._try_advance_round() # Attempts deal/showdown/end hand
+        if new_state.betting_done():
+            new_state.move_round()
         else:
-            # If round not over, just move to the next player
-            new_state._move_to_next_player()
-            # Check again if moving turn ended the round (e.g., last player acted)
-            # Avoid infinite loop if _move_to_next_player returns -1
-            if new_state.current_player_idx != -1 and new_state._is_betting_round_over():
-                 new_state._try_advance_round()
+            new_state.rotate_turn()
+            if new_state.current_player_idx != -1 and new_state.betting_done():
+                new_state.move_round()
 
-        return new_state # Return the successfully modified and advanced clone
+        return new_state
 
 
-    def _apply_action_logic(self, p_idx, action_type, amount):
-        """ Internal logic, MUTATES self state based on validated action. """
-        # Check bounds just in case internal state is inconsistent
-        if not (0 <= p_idx < self.num_players and \
-                p_idx < len(self.player_stacks) and \
-                p_idx < len(self.player_bets_in_round)):
-             raise IndexError(f"Invalid player index {p_idx} in _apply_action_logic")
-
+    def action_logic(self, p_idx, action_type, amount):
         player_stack = self.player_stacks[p_idx]
         current_round_bet = self.player_bets_in_round[p_idx]
-        self.players_acted_this_round.add(p_idx) # Mark as acted
-        action_log_repr = f"P{p_idx}:" # Start building log string
+        self.players_acted_this_round.add(p_idx)
+        action_log_repr = f"P{p_idx}:"
 
-        # --- Fold ---
         if action_type == "fold":
             self.player_folded[p_idx] = True
-            # Remove from active_players list IF PRESENT (might have been removed earlier)
             if p_idx in self.active_players:
                 self.active_players.remove(p_idx)
             action_log_repr += "f"
-            # Check if hand ends now (only one player left not folded)
             if len([p for p in range(self.num_players) if not self.player_folded[p]]) <= 1:
                 self.betting_round = self.HAND_OVER
-                self.current_player_idx = -1 # Hand is over
+                self.current_player_idx = -1
 
-        # --- Check ---
         elif action_type == "check":
-            # Validate check: Current bet must be <= player's bet in round (allow for tolerance)
             if self.current_bet - current_round_bet > 0.01:
                 raise ValueError(f"Invalid check P{p_idx}: Bet={self.current_bet}, HasBet={current_round_bet}")
-            action_log_repr += "k" # Log as check
+            action_log_repr += "k"
 
-        # --- Call ---
         elif action_type == "call":
             amount_needed = self.current_bet - current_round_bet
-            # If no amount needed, treat as check conceptually (but still log as call)
             if amount_needed <= 0.01:
-                action_log_repr += "c0" # Log as call of 0
-            else: # Actual call needed
+                action_log_repr += "c0"
+            else:
                 call_cost = min(amount_needed, player_stack)
-                if call_cost < 0: call_cost = 0 # Safety
+                if call_cost < 0: call_cost = 0
                 self.deduct_bet(p_idx, call_cost)
-                # Log total amount IN POT for round after call
                 action_log_repr += f"c{int(round(self.player_bets_in_round[p_idx]))}"
 
-        # --- Bet (Opening Bet) ---
         elif action_type == "bet":
-            # Validate: Only allowed if current_bet is 0 (or negligible)
-            if self.current_bet > 0.01:
-                raise ValueError("Invalid bet: Use raise instead as there is a facing bet.")
-            if amount < 0.01:
-                 raise ValueError("Bet amount must be positive.")
-            if self.raise_count_this_street >= self.MAX_RAISES_PER_STREET:
-                 raise ValueError("Max raises/bets reached for this street.")
-
-            # Determine minimum legal bet size (usually BB, but can be less if stack is small)
-            min_bet_amount = max(self.big_blind, 1.0) # Min bet is generally BB
-            actual_bet_cost = min(amount, player_stack) # Cost is capped by stack
+            actual_bet_cost = min(amount, player_stack)
             is_all_in = abs(actual_bet_cost - player_stack) < 0.01
-
-            # Check min bet size (unless all-in for less)
-            if actual_bet_cost < min_bet_amount - 0.01 and not is_all_in:
-                raise ValueError(f"Bet {actual_bet_cost:.2f} is less than minimum {min_bet_amount:.2f}")
-
-            # Apply bet
+            
             self.deduct_bet(p_idx, actual_bet_cost)
-            action_log_repr += f"b{int(round(actual_bet_cost))}" # Log the bet cost
+            action_log_repr += f"b{int(round(actual_bet_cost))}"
 
-            # Update betting state: New level is the bet size, player is last raiser
             new_total_bet_level = self.player_bets_in_round[p_idx]
             self.current_bet = new_total_bet_level
-            # First aggressive action sets baseline for next raise size
             self.last_raise = new_total_bet_level
             self.last_raiser = p_idx
-            self.raise_count_this_street = 1 # This is the first bet/raise
-            # Action re-opened, only this player has acted against the new level
+            self.raise_count_this_street = 1
             self.players_acted_this_round = {p_idx}
             if is_all_in:
-                self.player_all_in[p_idx] = True # Mark all-in state
+                self.player_all_in[p_idx] = True
 
-        # --- Raise ---
         elif action_type == "raise":
-            # Validate: Only allowed if there's a current bet to raise over
-            if self.current_bet <= 0.01:
-                raise ValueError("Invalid raise: Use bet instead as there is no facing bet.")
-            if self.raise_count_this_street >= self.MAX_RAISES_PER_STREET:
-                 raise ValueError("Max raises reached for this street.")
-
-            total_bet_target = amount # Amount passed is the TOTAL target bet level for the round
-            # Cost for the player to reach this target level
+            total_bet_target = amount
             cost_to_reach_target = total_bet_target - current_round_bet
-            if cost_to_reach_target <= 0.01:
-                 raise ValueError(f"Raise target {total_bet_target} not greater than current bet in round {current_round_bet}")
-            if cost_to_reach_target > player_stack + 0.01:
-                 raise ValueError(f"Player {p_idx} cannot afford raise cost {cost_to_reach_target:.2f} with stack {player_stack:.2f}")
-
-            # Actual cost paid by player (capped by stack)
             actual_raise_cost = min(cost_to_reach_target, player_stack)
-            # The total bet level player reaches after paying cost
             actual_total_bet_reached = current_round_bet + actual_raise_cost
             is_all_in = abs(actual_raise_cost - player_stack) < 0.01
 
-            # Check legality of raise size: Increment must be >= last raise increment OR player is all-in
-            # Minimum legal raise increment size (at least BB or the previous raise amount)
-            min_legal_increment = max(self.last_raise, self.big_blind)
-            # The actual increase over the *current facing bet level*
-            actual_increment_made = actual_total_bet_reached - self.current_bet
-
-            if actual_increment_made < min_legal_increment - 0.01 and not is_all_in:
-                raise ValueError(f"Raise increment {actual_increment_made:.2f} is less than minimum legal increment {min_legal_increment:.2f}")
-
-            # Apply the raise cost
             self.deduct_bet(p_idx, actual_raise_cost)
-            # Log the TOTAL amount reached after the raise
             action_log_repr += f"r{int(round(actual_total_bet_reached))}"
 
-            # Update state: new current bet level, last raiser, increment size
             new_bet_level = actual_total_bet_reached
-             # Update size of *this* raise increment (used for next min raise check)
             self.last_raise = new_bet_level - self.current_bet
-            self.current_bet = new_bet_level # Update level needed to call
+            self.current_bet = new_bet_level
             self.last_raiser = p_idx
             self.raise_count_this_street += 1
-            # Action re-opened, only this player has acted against the new level
             self.players_acted_this_round = {p_idx}
             if is_all_in:
-                 self.player_all_in[p_idx] = True # Mark all-in
+                self.player_all_in[p_idx] = True
 
-        # --- Unknown Action ---
-        else:
-            raise ValueError(f"Unknown action type: {action_type}")
-
-        # Add action to history if it wasn't just a marker (like Call 0)
-        # Ensure action_log_repr has more than just "P#: "
         if len(action_log_repr) > len(f"P{p_idx}:"):
             self.action_sequence.append(action_log_repr)
 
 
     def get_betting_history(self):
-         """ Returns the sequence of actions as a single semicolon-separated string. """
-         return ";".join(self.action_sequence)
+        return ";".join(self.action_sequence)
 
     def get_available_actions(self):
-        """ Calculates and returns a list of legal actions for the current player. """
         actions = []
         player_idx = self.current_player_idx
 
-        # Check if it's anyone's turn
         if player_idx == -1:
-            return []
+            return actions
 
-        # Basic validity checks for player index and state
-        try:
-             # Check bounds first
-            if not (0 <= player_idx < self.num_players and \
-                    player_idx < len(self.player_folded) and \
-                    player_idx < len(self.player_all_in) and \
-                    player_idx < len(self.player_stacks) and \
-                    player_idx < len(self.player_bets_in_round)):
-                 return [] # Invalid index or state lists not initialized correctly
+        if self.player_folded[player_idx] or self.player_all_in[player_idx] or self.player_stacks[player_idx] < 0.01:
+            return actions
 
-             # Check if player can act
-            if self.player_folded[player_idx] or \
-               self.player_all_in[player_idx] or \
-               self.player_stacks[player_idx] < 0.01:
-                return []
-        except IndexError:
-            # This should not happen if bounds check passes, but for safety
-            print(f"WARN get_available_actions: IndexError accessing state for P{player_idx}")
-            return []
-
-        # Get relevant state variables
         player_stack = self.player_stacks[player_idx]
         current_round_bet = self.player_bets_in_round[player_idx]
-        current_bet_level = self.current_bet
 
-        # --- Fold ---
-        # Always possible if player can act
         actions.append(("fold", 0))
 
-        # --- Check or Call ---
-        amount_to_call = current_bet_level - current_round_bet # Amount needed to match
-        can_check = amount_to_call < 0.01 # Check possible if no amount needed (or negligible)
+        amount_to_call = self.current_bet - current_round_bet
 
-        if can_check:
+        if amount_to_call < 0.01:
             actions.append(("check", 0))
-        else: # Call is needed
-            # Cost to call is capped by the player's stack
+        else:
             call_cost = min(amount_to_call, player_stack)
-            # Only add call if there's a significant cost (don't add "call 0")
-            if call_cost > 0.01:
-                # Store action tuple as (type, COST)
-                actions.append(("call", int(round(call_cost))))
+            actions.append(("call", int(round(call_cost))))
 
-        # --- Bet or Raise (Aggression) ---
-        # Check if max raises/bets limit reached
-        can_aggress = self.raise_count_this_street < self.MAX_RAISES_PER_STREET
-        # Can only aggress if stack is greater than cost to call (must be able to increase total bet)
-        # Use max(0, amount_to_call) in case current_bet < current_round_bet somehow
-        effective_call_cost = max(0.0, amount_to_call)
-        if can_aggress and player_stack > effective_call_cost + 0.01:
-            # Define min/max aggression amounts (as TOTAL bet target for the round)
-            # Max possible target is going all-in
-            max_legal_aggress_target_to = current_round_bet + player_stack
-            min_legal_aggress_target_to = float('inf') # Smallest TOTAL bet allowed
+        if self.raise_count_this_street < self.MAX_RAISES_PER_STREET and player_stack > amount_to_call + 0.01:
+            max_bet = current_round_bet + player_stack
 
-            if current_bet_level < 0.01: # Current action is BET (no prior aggression)
+            if self.current_bet < 0.01:
                 action_prefix = "bet"
-                # Min bet COST is usually BB, capped by stack
-                min_bet_cost = min(player_stack, max(self.big_blind, 1.0))
-                # Min TARGET is current bet (0) + min cost
-                min_legal_aggress_target_to = current_round_bet + min_bet_cost
-            else: # Current action is RAISE
+                bet_cost = min(player_stack, self.big_blind)
+                min_bet = current_round_bet + bet_cost
+            else:
                 action_prefix = "raise"
-                # Minimum legal raise increment size
-                min_legal_increment = max(self.last_raise, self.big_blind)
-                # Minimum total amount to raise TO
-                min_raise_target_to = current_bet_level + min_legal_increment
-                # The actual minimum target might be capped by going all-in
-                # Ensure min target is calculated correctly even if all-in is less than required increment
-                min_legal_aggress_target_to = min(max_legal_aggress_target_to, min_raise_target_to)
+                min_raise = max(self.last_raise, self.big_blind)
+                new_bet = self.current_bet + min_raise
+                min_bet = min(max_bet, new_bet)
+
+            is_raise = (min_bet > self.current_bet + 0.01)
+
+            if is_raise:
+                actions.append((action_prefix, int(round(min_bet))))
+
+            is_all_in_aggro = (max_bet > self.current_bet + 0.01)
+            is_all_in_forced = abs(max_bet - min_bet) > 0.01
+
+            if is_all_in_aggro and (not is_raise or is_all_in_forced) :
+                 actions.append((action_prefix, int(round(max_bet))))
+
+        return actions
 
 
-            # Ensure the calculated minimum target is actually greater than the current bet level
-            # (It might not be if going all-in is less than the required increment)
-            is_min_target_aggressive = (min_legal_aggress_target_to > current_bet_level + 0.01)
-
-            # Add Min Legal Aggressive Action (if possible & actually aggressive)
-            if is_min_target_aggressive:
-                # Store action tuple as (type, TARGET_TOTAL_AMOUNT)
-                actions.append((action_prefix, int(round(min_legal_aggress_target_to))))
-
-            # Add All-In Aggressive Action (if going all-in is possible, aggressive, and distinct from min legal)
-            is_all_in_target_aggressive = (max_legal_aggress_target_to > current_bet_level + 0.01)
-            is_all_in_distinct = abs(max_legal_aggress_target_to - min_legal_aggress_target_to) > 0.01
-
-            if is_all_in_target_aggressive and (not is_min_target_aggressive or is_all_in_distinct) :
-                # Add all-in if it's aggressive and either min wasn't added or all-in is different
-                 actions.append((action_prefix, int(round(max_legal_aggress_target_to))))
-
-
-        # --- Final Filtering and Sorting ---
-        def sort_key(action_tuple):
-            """ Defines sorting order: fold < check < call < bet < raise, then by amount. """
-            action_type, amount = action_tuple
-            order = {"fold":0, "check":1, "call":2, "bet":3, "raise":4}
-            # Use amount directly for sorting, ensure type is numeric for comparison if needed
-            sort_amount = amount if isinstance(amount, (int, float)) else 0
-            return (order.get(action_type, 99), sort_amount)
-
-        final_actions = []
-        seen_actions_repr = set() # Use a representation string/tuple for uniqueness check
-
-        # Sort the collected actions
-        sorted_actions = sorted(actions, key=sort_key)
-
-        for act_tuple in sorted_actions:
-             act_type, act_amount = act_tuple
-             # Create a canonical representation for checking uniqueness
-             # Use rounded int amount for consistency
-             action_key_repr = (act_type, int(round(act_amount)))
-
-             # Calculate the actual COST of this action for the player
-             cost = 0.0
-             if act_type == 'call':
-                  # Call amount IS the cost (already capped by stack if generated correctly)
-                  cost = act_amount
-             elif act_type == 'bet':
-                  # Bet amount IS the cost (from 0), should be capped by stack
-                  cost = act_amount
-             elif act_type == 'raise':
-                  # Raise cost is TARGET_TOTAL_AMOUNT - AlreadyInRound
-                  cost = act_amount - current_round_bet
-             # Ensure cost is not negative (e.g., if rounding causes issues)
-             cost = max(0.0, cost)
-
-             # Add if unique representation and player can afford the cost (with small tolerance)
-             if action_key_repr not in seen_actions_repr and cost <= player_stack + 0.01:
-                 final_actions.append(act_tuple) # Add the ORIGINAL tuple
-                 seen_actions_repr.add(action_key_repr)
-
-        return final_actions # Return the filtered, sorted list
-
-
-    def _is_betting_round_over(self):
+    def betting_done(self):
         """ Checks if the current betting round has concluded based on player actions and bets. """
         # Find players who are not folded
         eligible_players = [p for p in range(self.num_players) if not self.player_folded[p]]
@@ -684,7 +469,7 @@ class GameState:
         return all_matched and all_acted
 
 
-    def _try_advance_round(self):
+    def move_round(self):
         """ Attempts to deal next street or end hand if betting round finished. MUTATES state. """
         # Check if hand ended due to folds
         eligible_players = [p for p in range(self.num_players) if not self.player_folded[p]]

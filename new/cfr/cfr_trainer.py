@@ -207,7 +207,7 @@ class CFRTrainer:
         if is_folded or is_all_in:
             temp_state = game_state.clone()
             original_turn_idx = temp_state.current_player_idx
-            temp_state._move_to_next_player()
+            temp_state.rotate_turn()
             if temp_state.current_player_idx == original_turn_idx or temp_state.is_terminal():
                 utility = 0.0
                 try:

@@ -159,7 +159,7 @@ def _worker_cfr_traverse(game_state, reach_probs, perspective_player_idx,
     if is_folded or is_all_in:
         temp_state = game_state.clone()
         original_turn_idx = temp_state.current_player_idx
-        try: temp_state._move_to_next_player()
+        try: temp_state.rotate_turn()
         except Exception: return 0.0 # Fail state
 
         if temp_state.current_player_idx == original_turn_idx or temp_state.is_terminal():
