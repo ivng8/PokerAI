@@ -899,7 +899,7 @@ class GameState:
              if self.betting_round != self.HAND_OVER: # Avoid redundant set
                   self.betting_round = self.HAND_OVER
              self.current_player_idx = -1
-             self.players_acted_this_round = set()
+             self.players_acted_this_round = set() 
 
 
     def is_terminal(self):

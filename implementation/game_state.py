@@ -237,15 +237,15 @@ class GameState:
     def check_all_shoved(self):
         non_folded_players = [p for p in range(self.num_players) if not self.player_folded[p]]
 
-        if len(non_folded_players) <= 1:
+        if len(non_folded_players) < 2:
             return True
 
-        count_can_still_act_voluntarily = 0
+        still_act = 0
         for p_idx in non_folded_players:
             if not self.player_all_in[p_idx]:
-                count_can_still_act_voluntarily += 1
+                still_act += 1
 
-        return count_can_still_act_voluntarily <= 1
+        return still_act < 2
 
     def rotate_turn(self):
         if self.current_player_idx != -1:
@@ -403,7 +403,6 @@ class GameState:
 
 
     def betting_done(self):
-        """ Checks if the current betting round has concluded based on player actions and bets. """
         vpip = [p for p in range(self.num_players) if not self.player_folded[p]]
         if len(vpip) < 2:
             return True
@@ -418,300 +417,160 @@ class GameState:
 
         if len(side_pot) == 1:
             player = side_pot[0]
-            has_acted = player in self.players_acted_this_round
-            facing_bet = (self.current_bet - self.player_bets_in_round[player]) > 0.01
 
-            # Special Preflop BB Option Check:
-            is_preflop = (self.betting_round == self.PREFLOP)
-            # Determine BB player index robustly
+            is_preflop = self.betting_round == self.PREFLOP
             bb_player_idx = None
-            if len(self.active_players) >= 2: # Need active_players list from start_new_hand
-                 if len(self.active_players) == 2: bb_player_idx = self.offset_from_dealer(1)
-                 else: bb_player_idx = self.offset_from_dealer(2)
+            if len(self.active_players) == 2:
+                bb_player_idx = self.offset_from_dealer(1)
+            elif len(self.active_players) > 2: 
+                bb_player_idx = self.offset_from_dealer(2)
 
-            is_bb_player = (player == bb_player_idx)
-            # Check if only blinds have been posted (no re-raise occurred)
-            no_reraise_yet = (self.raise_count_this_street <= 1 and self.last_raiser == bb_player_idx)
+            has_acted = player in self.players_acted_this_round
+            facing_bet = self.current_bet - self.player_bets_in_round[player] > 0.01
+            is_bb_player = player == bb_player_idx
+            no_reraise_yet = self.last_raiser == bb_player_idx
 
-            # If it's preflop, the player is BB, no re-raise occurred, they DON'T face a bet, AND they haven't acted yet...
             if is_preflop and is_bb_player and no_reraise_yet and not facing_bet and not has_acted:
-                 return False # BB still has the option to act
+                return False
 
-            # Otherwise (for Case 2), the round ends if the player doesn't face a bet, OR if they do face a bet but have already acted this round.
             return not facing_bet or has_acted
 
-        # Case 3: Multiple players can act
-        # Round ends if ALL players who can act have matched the current bet AND have acted at least once this round.
-        all_matched = True
-        all_acted = True
         for p_idx in side_pot:
-            # Check if bet matches current level (allow tolerance)
             if abs(self.player_bets_in_round[p_idx] - self.current_bet) > 0.01:
-                all_matched = False
-             # Check if player has acted since the last aggressive action (or start of round)
+                return False
             if p_idx not in self.players_acted_this_round:
-                all_acted = False
-            # If either condition fails for any player, we can stop checking
-            if not all_matched or not all_acted:
-                break
+                return False
 
-        return all_matched and all_acted
+        return True
 
 
     def move_round(self):
-        """ Attempts to deal next street or end hand if betting round finished. MUTATES state. """
-        # Check if hand ended due to folds
-        eligible_players = [p for p in range(self.num_players) if not self.player_folded[p]]
-        if len(eligible_players) <= 1:
-            if self.betting_round != self.HAND_OVER:
-                self.betting_round = self.HAND_OVER
+        vpip = [p for p in range(self.num_players) if not self.player_folded[p]]
+        if len(vpip) < 2:
+            self.betting_round = self.HAND_OVER
             self.current_player_idx = -1
-            self.players_acted_this_round = set() # Clear acted set for safety
-            return # Hand is over
+            self.players_acted_this_round = set()
+            return
 
-        # Check if betting is skipped because players are all-in
-        should_skip_betting = self.check_all_shoved()
-
-        if should_skip_betting and self.betting_round < self.SHOWDOWN:
-            # Deal remaining streets without betting if players are all-in
-            # Deals sequentially until river or error
-            # Need to ensure we don't advance round state incorrectly within deal methods
-            temp_round = self.betting_round # Store current round before dealing
-
-            if temp_round < self.FLOP:
-                 if not self.deal_flop(): self.betting_round = self.HAND_OVER; self.current_player_idx = -1; return
-                 # deal_flop sets round to FLOP, but we might need turn/river too
-            if len(self.community_cards) < 4: # Check card count directly
-                 if not self.deal_turn(): self.betting_round = self.HAND_OVER; self.current_player_idx = -1; return
-            if len(self.community_cards) < 5:
-                 if not self.deal_river(): self.betting_round = self.HAND_OVER; self.current_player_idx = -1; return
-
-            # If we successfully dealt up to the river (or were already there)
+        if self.check_all_shoved() and self.betting_round < self.SHOWDOWN:
+            if self.betting_round == self.PREFLOP:
+                self.deal_flop()
+            if self.betting_round == self.FLOP:
+                self.deal_turn()
+            if self.betting_round == self.TURN:
+                self.deal_river()
             if self.betting_round != self.HAND_OVER:
-                 self.betting_round = self.SHOWDOWN
-                 self.current_player_idx = -1 # No more actions
-                 self.players_acted_this_round = set()
-            return # Reached showdown (or hand over due to error)
+                self.betting_round = self.SHOWDOWN
+                self.current_player_idx = -1
+                self.players_acted_this_round = set()
+            return
 
-        # --- Normal round advancement after betting completes ---
-        current_round = self.betting_round
-        round_advanced_successfully = False
-
-        if current_round == self.PREFLOP:
-            round_advanced_successfully = self.deal_flop()
-        elif current_round == self.FLOP:
-            round_advanced_successfully = self.deal_turn()
-        elif current_round == self.TURN:
-            round_advanced_successfully = self.deal_river()
-        elif current_round == self.RIVER:
-             # After river betting, move to showdown
+        if self.betting_round == self.PREFLOP:
+            self.deal_flop()
+        elif self.betting_round == self.FLOP:
+            self.deal_turn()
+        elif self.betting_round == self.TURN:
+            self.deal_river()
+        elif self.betting_round == self.RIVER:
             self.betting_round = self.SHOWDOWN
-            self.current_player_idx = -1 # No more actions
-            self.players_acted_this_round = set() # Clear acted set
-            round_advanced_successfully = True
-        # If already in SHOWDOWN or HAND_OVER, do nothing
-
-        # If dealing failed, set state to HAND_OVER
-        if not round_advanced_successfully and self.betting_round < self.SHOWDOWN:
-             if self.betting_round != self.HAND_OVER: # Avoid redundant set
-                  self.betting_round = self.HAND_OVER
-             self.current_player_idx = -1
-             self.players_acted_this_round = set()
-
+            self.current_player_idx = -1
+            self.players_acted_this_round
 
     def is_terminal(self):
-        """ Checks if the game hand has reached a terminal state. """
-        # Hand ends if only one player remains unfolded
-        eligible_player_count = len([p for p in range(self.num_players) if not self.player_folded[p]])
-        if eligible_player_count <= 1:
+        vpip_count = len([p for p in range(self.num_players) if not self.player_folded[p]])
+        if vpip_count <= 2:
             return True
-        # Hand ends if we have reached or passed the showdown stage
         if self.betting_round >= self.SHOWDOWN:
              return True
         return False
 
 
     def get_utility(self, player_idx, initial_stacks=None):
-        """ Calculates the utility (profit/loss) for a player at the end of a terminal hand. """
         if not self.is_terminal():
-             # print(f"WARN get_utility: Called on non-terminal state for P{player_idx}")
-             return 0.0
-        if initial_stacks is None:
-             print(f"ERROR get_utility: initial_stacks missing for P{player_idx}. Returning 0.")
-             return 0.0
-        # Validate inputs
-        if not (0 <= player_idx < self.num_players and \
-                isinstance(initial_stacks, list) and \
-                len(initial_stacks) == self.num_players and \
-                player_idx < len(self.player_stacks)):
-             print(f"WARN get_utility: Index or stack list mismatch for P{player_idx}")
-             return 0.0
-
-        # Get initial stack safely
-        initial_stack = 0.0
-        try:
-            i_s = initial_stacks[player_idx]
-            # Check type and for NaN/Inf
-            if not isinstance(i_s, (int, float)) or np.isnan(i_s) or np.isinf(i_s):
-                 raise ValueError("Invalid initial stack value")
-            initial_stack = float(i_s)
-        except (IndexError, TypeError, ValueError) as e:
-            print(f"WARN get_utility: Invalid initial stack for P{player_idx}: {e}")
             return 0.0
+        
+        i_s = initial_stacks[player_idx]
+        initial_stack = float(i_s)
 
-        # Get current stack safely (make a copy to avoid modifying original state)
-        current_game_state_copy = self.clone()
-        current_stack = 0.0
+        current_copy = self.clone()
+        c_s = current_copy.player_stacks[player_idx]
+        current_stack = float(c_s)
+
         try:
-            c_s = current_game_state_copy.player_stacks[player_idx]
-            if not isinstance(c_s, (int,float)) or np.isnan(c_s) or np.isinf(c_s):
-                 raise ValueError("Invalid current stack value")
-            current_stack = float(c_s)
-        except (IndexError, TypeError, ValueError) as e:
-             print(f"WARN get_utility: Invalid current stack for P{player_idx}: {e}")
-             return 0.0
-
-
-        # Determine winners and distribute pot internally (on the copy)
-        # Use the *original* determine_winners logic for this internal calculation
-        # This assumes determine_winners updates the stacks on the object it's called on.
-        try:
-             # Call determine_winners on the cloned state
-             _ = current_game_state_copy.determine_winners()
-             # Get the final stack from the *modified clone*
-             final_effective_stack = current_game_state_copy.player_stacks[player_idx]
-             # Validate the final stack
-             if not isinstance(final_effective_stack, (int,float)) or np.isnan(final_effective_stack) or np.isinf(final_effective_stack):
-                  raise ValueError("Invalid final stack value after internal win determination")
-
-        except Exception as win_err:
-             print(f"ERROR get_utility: Internal win determination failed for P{player_idx}: {win_err}")
-             traceback.print_exc() # Print traceback for debugging
-             # Fallback: return utility based on current stack before win determination attempt
-             final_effective_stack = current_stack # Use pre-distribution stack
-
-        # Utility is the change in stack size
+            _ = current_copy.determine_winners()
+            final_effective_stack = current_copy.player_stacks[player_idx]
+        except:
+            final_effective_stack = current_stack    
+            
         utility = final_effective_stack - initial_stack
 
-        # Final safety check for NaN/Inf
         if np.isnan(utility) or np.isinf(utility):
-            # print(f"WARN get_utility: Calculated utility is NaN/Inf for P{player_idx}. Returning 0.")
             utility = 0.0
 
         return utility
 
 
     def determine_winners(self, player_names=None):
-        """
-        Determines the winner(s) of the hand, calculates side pots, and updates player stacks.
-        MUTATES the game state (self.player_stacks, self.pot).
-        Returns a list summarizing pot distribution.
-        """
         if not self.is_terminal():
-             # print("WARN: determine_winners called on non-terminal state.")
-             return [] # Cannot determine winners yet
-
-        # If pot is negligible, nothing to distribute
-        if self.pot < 0.01:
-             self.pot = 0.0 # Ensure pot is zeroed
-             return []
-
-        # Make local copy of pot to distribute, zero out state pot
-        total_pot_to_distribute = self.pot
-        self.pot = 0.0
-        pots_summary = [] # To store summary of each pot distribution
-
-        # Identify players still eligible for the pot (not folded)
-        eligible_for_pot = [p for p in range(self.num_players) if not self.player_folded[p]]
-
-        # Case 1: Uncontested pot (everyone else folded)
-        if len(eligible_for_pot) == 1:
-            winner_idx = eligible_for_pot[0]
-            amount_won = total_pot_to_distribute
-            if 0 <= winner_idx < len(self.player_stacks):
-                self.player_stacks[winner_idx] += amount_won
-                pots_summary = [{'winners': [winner_idx], 'amount': amount_won, 'eligible': [winner_idx], 'desc': 'Uncontested'}]
-            return pots_summary
-
-        # Case 2: Showdown required
-        evaluated_hands = {}
-        valid_showdown_players = [] # Players who are eligible AND have valid hands for showdown
-        for p_idx in eligible_for_pot:
-            # Check list bounds and hand validity
-            if p_idx >= len(self.hole_cards) or len(self.hole_cards[p_idx]) != 2:
-                continue # Skip players with invalid hole cards
-            all_cards_for_eval = self.hole_cards[p_idx] + self.community_cards
-            # Need at least 5 cards total (2 hole + 3 community minimum) for evaluation
-            if len(all_cards_for_eval) < 5:
-                 continue # Skip if not enough cards dealt yet (shouldn't happen if terminal state is correct)
-            try:
-                # Evaluate hand using the HandEvaluator
-                evaluated_hands[p_idx] = HandEvaluator.evaluate_hand(all_cards_for_eval)
-                valid_showdown_players.append(p_idx)
-            except Exception as eval_err:
-                 print(f"WARN determine_winners: Hand evaluation failed for P{p_idx}: {eval_err}")
-                 continue # Skip players whose hands cannot be evaluated
-
-        # If no players have valid hands for showdown (e.g., error, insufficient cards), return empty
-        if not valid_showdown_players:
-            # print("WARN determine_winners: No valid hands found for showdown.")
-            # Pot remains undistributed in this error case? Or return to players? Safest is maybe let it vanish.
             return []
 
-        # Calculate side pots based on contributions
-        # Get total contribution for each player eligible for showdown
-        contributions = sorted([(p, self.player_total_bets_in_hand[p]) for p in valid_showdown_players], key=lambda x: x[1])
+        if self.pot < 0.01:
+            self.pot = 0.0
+            return []
 
-        side_pots = [] # List to store {'amount': float, 'eligible': list_of_player_indices}
+        total_pot_to_distribute = self.pot
+        self.pot = 0.0
+        pots_summary = []
+
+        vpip = [p for p in range(self.num_players) if not self.player_folded[p]]
+        
+        if not vpip:
+            return []
+        
+        if len(vpip) == 1:
+            winner_idx = vpip[0]
+            amount_won = total_pot_to_distribute
+            self.player_stacks[winner_idx] += amount_won
+            pots_summary = [{'winners': [winner_idx], 'amount': amount_won, 'eligible': [winner_idx], 'desc': 'Uncontested'}]
+            return pots_summary
+
+        evaluated_hands = {}
+        for p_idx in vpip:
+            all_cards_for_eval = self.hole_cards[p_idx] + self.community_cards
+            evaluated_hands[p_idx] = HandEvaluator.evaluate_hand(all_cards_for_eval)
+
+        contributions = sorted([(p, self.player_total_bets_in_hand[p]) for p in vpip], key=lambda x: x[1])
+
+        side_pots = []
         last_contribution_level = 0.0
-        # Make a copy of players eligible for the *next* pot to be created
-        eligible_for_next_pot = valid_showdown_players[:]
 
         for p_idx_sp, total_contribution in contributions:
-             contribution_increment = total_contribution - last_contribution_level
-             # If this player contributed more than the last level...
-             if contribution_increment > 0.01:
-                 num_eligible = len(eligible_for_next_pot)
-                 # The amount for this side pot is the increment times the number of players eligible for it
-                 pot_amount = contribution_increment * num_eligible
-                 if pot_amount > 0.01:
-                      # Add this side pot info (amount, and WHO is eligible for THIS pot)
-                     side_pots.append({'amount': pot_amount, 'eligible': eligible_for_next_pot[:]}) # Use copy
-                 last_contribution_level = total_contribution # Update the contribution level
+            contribution_increment = total_contribution - last_contribution_level
+            if contribution_increment > 0.01:
+                pot_amount = contribution_increment * len(vpip)
+                if pot_amount > 0.01:
+                    side_pots.append({'amount': pot_amount, 'eligible': vpip[:]})
+                last_contribution_level = total_contribution
 
-             # This player is no longer eligible for subsequent, smaller side pots they didn't contribute fully to
-             if p_idx_sp in eligible_for_next_pot:
-                 eligible_for_next_pot.remove(p_idx_sp)
+            if p_idx_sp in vpip:
+                vpip.remove(p_idx_sp)
 
-        # Add main pot if no side pots were needed (e.g. all contributed same)
-        # Check if the calculated side pots cover the total pot
-        calculated_pot_sum = sum(sp['amount'] for sp in side_pots)
-        # If side pots were created but don't sum up, there might be an issue.
-        # If NO side pots were created, the entire pot is the main pot.
         if not side_pots and total_pot_to_distribute > 0.01:
-             side_pots.append({'amount': total_pot_to_distribute, 'eligible': valid_showdown_players[:]})
-        # Optional check for discrepancy:
-        # elif abs(calculated_pot_sum - total_pot_to_distribute) > 0.1: # Allow small tolerance
-        #    print(f"WARN determine_winners: Discrepancy between total pot {total_pot_to_distribute} and sum of side pots {calculated_pot_sum}")
-
-
-        # Award the pots
+             side_pots.append({'amount': total_pot_to_distribute, 'eligible': vpip[:]})
+        
         distributed_total = 0
-        pots_summary = [] # Re-initialize summary list
         for i, pot_info in enumerate(side_pots):
             pot_amount = pot_info.get('amount', 0.0)
             eligible_players_this_pot = pot_info.get('eligible', [])
 
             if pot_amount < 0.01 or not eligible_players_this_pot:
-                 continue # Skip empty pots or pots with no eligible players
+                 continue
 
-            # Find the best hand among players eligible for THIS pot
             eligible_hands = {p: evaluated_hands[p] for p in eligible_players_this_pot if p in evaluated_hands}
             if not eligible_hands:
-                 continue # Skip if no valid hands among eligible players
+                 continue
 
             best_hand_value = max(eligible_hands.values())
-            # Find all players eligible for this pot who have the best hand value
             pot_winners = [p for p, hand_val in eligible_hands.items() if hand_val == best_hand_value]
 
             if pot_winners:
@@ -726,14 +585,7 @@ class GameState:
                  pot_desc = f"Side Pot {i+1}" if len(side_pots) > 1 else "Main Pot"
                  pots_summary.append({'winners':pot_winners, 'amount':pot_amount, 'eligible':eligible_players_this_pot, 'desc': pot_desc})
 
-        # Optional check if distributed amount matches total pot
-        # if abs(distributed_total - total_pot_to_distribute) > 0.1:
-        #     print(f"WARN determine_winners: Distributed {distributed_total} != Total Pot {total_pot_to_distribute}")
-
         return pots_summary
 
-
     def clone(self):
-        """ Creates a deep copy of the game state. """
-        # Using deepcopy is generally safest for complex objects with nested structures
         return deepcopy(self)
