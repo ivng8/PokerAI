@@ -404,33 +404,22 @@ class GameState:
 
     def betting_done(self):
         """ Checks if the current betting round has concluded based on player actions and bets. """
-        # Find players who are not folded
-        eligible_players = [p for p in range(self.num_players) if not self.player_folded[p]]
-        if len(eligible_players) <= 1:
-            return True # Round (and hand) ends if <= 1 player remains
-
-        # Find players who can still make a voluntary action (not folded, not all-in, has chips)
-        players_who_can_voluntarily_act = []
-        for p_idx in eligible_players:
-             # Check bounds for safety
-            if 0 <= p_idx < self.num_players and \
-               p_idx < len(self.player_all_in) and \
-               p_idx < len(self.player_stacks):
-                 if not self.player_all_in[p_idx] and self.player_stacks[p_idx] > 0.01:
-                      players_who_can_voluntarily_act.append(p_idx)
-
-        num_can_act = len(players_who_can_voluntarily_act)
-
-        # Case 1: Zero players can voluntarily act (everyone remaining is all-in)
-        if num_can_act == 0:
+        vpip = [p for p in range(self.num_players) if not self.player_folded[p]]
+        if len(vpip) < 2:
             return True
 
-        # Case 2: Only one player can voluntarily act
-        if num_can_act == 1:
-            the_player = players_who_can_voluntarily_act[0]
-            has_acted = the_player in self.players_acted_this_round
-            # Check if they face a bet requiring action
-            facing_bet = (self.current_bet - self.player_bets_in_round[the_player]) > 0.01
+        side_pot = []
+        for p_idx in vpip:
+            if not self.player_all_in[p_idx]:
+                side_pot.append(p_idx)
+
+        if len(side_pot) == 0:
+            return True
+
+        if len(side_pot) == 1:
+            player = side_pot[0]
+            has_acted = player in self.players_acted_this_round
+            facing_bet = (self.current_bet - self.player_bets_in_round[player]) > 0.01
 
             # Special Preflop BB Option Check:
             is_preflop = (self.betting_round == self.PREFLOP)
@@ -440,7 +429,7 @@ class GameState:
                  if len(self.active_players) == 2: bb_player_idx = self.offset_from_dealer(1)
                  else: bb_player_idx = self.offset_from_dealer(2)
 
-            is_bb_player = (the_player == bb_player_idx)
+            is_bb_player = (player == bb_player_idx)
             # Check if only blinds have been posted (no re-raise occurred)
             no_reraise_yet = (self.raise_count_this_street <= 1 and self.last_raiser == bb_player_idx)
 
@@ -455,7 +444,7 @@ class GameState:
         # Round ends if ALL players who can act have matched the current bet AND have acted at least once this round.
         all_matched = True
         all_acted = True
-        for p_idx in players_who_can_voluntarily_act:
+        for p_idx in side_pot:
             # Check if bet matches current level (allow tolerance)
             if abs(self.player_bets_in_round[p_idx] - self.current_bet) > 0.01:
                 all_matched = False
