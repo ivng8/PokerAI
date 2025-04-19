@@ -1,4 +1,3 @@
-import traceback
 import numpy as np
 from deck import Deck
 from hand_eval import HandEvaluator

@@ -10,12 +10,12 @@ import random # Ensure random is imported
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Use absolute imports that work when run directly
-from organized_poker_bot.game_engine.game_state import GameState
-from organized_poker_bot.game_engine.player import Player # Base Player
+from game_engine.game_state import GameState
+from game_engine.player import Player # Base Player
 # BotPlayer might be needed if type checking, but usually handled by polymorphism
 # from organized_poker_bot.bot.bot_player import BotPlayer
-from organized_poker_bot.game_engine.deck import Deck
-from organized_poker_bot.game_engine.hand_evaluator import HandEvaluator
+from game_engine.deck import Deck
+from game_engine.hand_evaluator import HandEvaluator
 
 # --- Helper for Position Names ---
 # Assuming BTN=0, SB=1, BB=2, LJ=3, HJ=4, CO=5 relative to dealer
