@@ -1,6 +1,6 @@
 # Texas Hold'em Poker Bot: A CFR/DLS Implementation
 
-This repository contains a implementation of a No-Limit Hold'em (NLHE) poker bot designed for 6-max games.
+This repository contains a implementation of a No-Limit Hold'em (NLHE) poker bot designed for 6-max games. (Inspired by Pluribus)
 
 ## Key Features
 
