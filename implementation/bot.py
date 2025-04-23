@@ -1,8 +1,8 @@
 import numpy as np
 
-from implementation.players.player import Player
-from implementation.algo.strategy import MCCFRStrategy
-from implementation.algo.dls import DepthLimitedSearch
+from implementation.player import Player
+from implementation.strategy import MCCFRStrategy
+from implementation.dls import DepthLimitedSearch
 
 class BotPlayer(Player):
 

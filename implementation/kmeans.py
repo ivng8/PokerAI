@@ -8,7 +8,7 @@ import time
 from sklearn.cluster import KMeans
 
 from hand_eval import HandEvaluator
-from implementation.items.card import Card
+from implementation.card import Card
 
 class Clustering:
     NUM_PREFLOP_BUCKETS = 20

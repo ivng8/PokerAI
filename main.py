@@ -1,7 +1,7 @@
 import os
 import argparse
 
-from training import SelfTrainer
+from implementation.training import SelfTrainer
 
 def main():
     parser = argparse.ArgumentParser(description='Train poker bot using self-play')

@@ -1,6 +1,6 @@
 import numpy as np
-from implementation.items.deck import Deck
-from hand_eval import HandEvaluator
+from implementation.deck import Deck
+from implementation.hand_eval import HandEvaluator
 from copy import deepcopy
 
 class GameState:

@@ -1,6 +1,6 @@
 import random
 
-from implementation.items.card import Card
+from implementation.card import Card
 
 class Deck:
 

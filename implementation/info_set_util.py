@@ -1,5 +1,5 @@
 from implementation.game_state import GameState
-from implementation.buckets.kmeans import Clustering
+from implementation.kmeans import Clustering
 
 def generate_key(game_state, player_idx):
     cards_part = "NOCARDS"
