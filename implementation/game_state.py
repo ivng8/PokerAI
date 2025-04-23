@@ -51,6 +51,9 @@ class GameState:
                 break
 
         return None
+    
+    def get_position(self, player_idx):
+        return (player_idx - self.dealer_position + self.num_players) % self.num_players
 
     def offset_from_dealer(self, offset):
         if not self.active_players: 

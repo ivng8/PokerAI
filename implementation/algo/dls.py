@@ -65,7 +65,7 @@ class DepthLimitedSearch:
                 
             # If not in available actions, use default strategy
             if best_action not in available_actions:
-                best_action = self.blueprint_strategy.default_strategy(game_state, available_actions)
+                best_action = self.blueprint_strategy.default_strategy(available_actions)
 
         # Ensure chosen action is available
         if best_action not in available_actions:
@@ -146,9 +146,9 @@ class DepthLimitedSearch:
                 return float(utility_val) if isinstance(utility_val, (int, float)) and not (np.isnan(utility_val) or np.isinf(utility_val)) else 0.0
 
             # Select action using UCB1
-            chosen_action = self.select_action_ucb(sim_state, info_set_key, available_actions, current_player_idx)
+            chosen_action = self.select_action_ucb(info_set_key, available_actions)
             if not isinstance(chosen_action, tuple) or chosen_action not in available_actions:
-                chosen_action = self.blueprint_strategy.default_strategy(sim_state, available_actions)
+                chosen_action = self.blueprint_strategy.default_strategy(available_actions)
 
         # Apply chosen action
         next_sim_state = sim_state.apply_action(chosen_action)
@@ -246,7 +246,7 @@ class DepthLimitedSearch:
                 action = (action, 0)
                 
             if not isinstance(action, tuple) or action not in available_rollout:
-                action = self.blueprint_strategy.default_strategy(sim_state, available_rollout)
+                action = self.blueprint_strategy.default_strategy(available_rollout)
 
             # Apply action
             sim_state = sim_state.apply_action(action)

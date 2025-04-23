@@ -19,7 +19,7 @@ class MCCFRStrategy:
         if action_probs is None or not isinstance(action_probs, dict) or not action_probs:
             # InfoSet not found or invalid format - Use default strategy
             available_actions = game_state.get_available_actions()
-            return self.default_strategy(game_state, available_actions)
+            return self.default_strategy(available_actions)
 
         # Choose Action based on Loaded Probabilities
         return self.choose_action(action_probs, game_state)
@@ -42,7 +42,7 @@ class MCCFRStrategy:
 
         # If no available actions match the strategy (or sum is zero), use default
         if not valid_actions_dict or total_prob_available <= 1e-9:
-            return self.default_strategy(game_state, available_actions)
+            return self.default_strategy(available_actions)
 
         # Normalize probabilities of available actions
         normalized_probs = []
@@ -58,7 +58,7 @@ class MCCFRStrategy:
         
         return chosen_action
     
-    def _default_strategy(self, game_state, available_actions):
+    def default_strategy(self, available_actions):
         if not available_actions or not isinstance(available_actions, list):
             return ('fold', 0)
 

@@ -1,4 +1,4 @@
-from implementation.game.game_state import GameState
+from implementation.game_state import GameState
 from implementation.buckets.kmeans import Clustering
 
 def generate_key(game_state, player_idx):

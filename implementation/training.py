@@ -4,7 +4,7 @@ import random
 import time
 import numpy as np
 
-from implementation.game.game_state import GameState
+from implementation.game_state import GameState
 from implementation.algo.strategy import MCCFRStrategy
 from trainer import Trainer
 
@@ -65,11 +65,10 @@ class SelfTrainer:
             starting_stack=self.starting_stack, 
             small_blind=self.small_blind, 
             big_blind=self.big_blind)
-        game.start_new_hand()
         
         dealer_position = random.randint(0, 5)
         initial_stacks = [float(self.starting_stack)] * 6
-        game.start_new_hand(dealer_pos=dealer_position, player_stacks=initial_stacks)
+        game.start_new_hand(dealer_position, initial_stacks)
         
         utility = self.cfr_trainer.calculate_cfr(
             game_state=game,
@@ -173,7 +172,7 @@ class SelfTrainer:
         
         # Recreate information sets in the CFR trainer
         for key, strat in strategy.items():
-            self.cfr_trainer._get_or_create_info_set(key, list(strat.keys()))
+            self.cfr_trainer.get_info_set(key, list(strat.keys()))
             
         # Load training statistics if available
         stats_file = os.path.join(self.output_dir, "training_stats.pkl")

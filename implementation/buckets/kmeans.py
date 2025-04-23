@@ -97,7 +97,6 @@ class Clustering:
         
     @classmethod
     def simple_preflop_bucket(cls, hole_cards):
-        """ Simple deterministic preflop bucketing based on score heuristic. """
         if len(hole_cards) != 2:
             return cls.NUM_PREFLOP_BUCKETS - 1
         
@@ -112,11 +111,11 @@ class Clustering:
         if suited:
             score += 2.0
         if gap >= 0 and gap < 5:
-            score += (4.0 - gap)  # Connector bonus
+            score += (4.0 - gap)
 
-        min_score, max_score = 5.0, 21.0  # Approximate score range
+        min_score, max_score = 5.0, 21.0
         if max_score <= min_score:
-            return 0  # Avoid division by zero
+            return 0
 
         normalized = (score - min_score) / (max_score - min_score)
         # Invert: High score -> Low bucket index
