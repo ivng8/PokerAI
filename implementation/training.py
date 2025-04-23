@@ -3,7 +3,6 @@ import pickle
 import random
 import time
 import numpy as np
-from tqdm import tqdm
 
 from game_state import GameState
 from strategy import MCCFRStrategy

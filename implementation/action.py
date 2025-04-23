@@ -1,5 +1,3 @@
-from game_state import GameState
-
 class ActionBucket:
     POT_FRACTIONS_BET = [0.33, 0.5, 0.75, 1.0, 1.25]
     RAISE_MULTIPLIERS = [2.5, 3.5]

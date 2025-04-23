@@ -1,8 +1,11 @@
 import pickle
 
-# Load the trained strategy
-with open("path/to/models/final_strategy.pkl", "rb") as f:
-    strategy_dict = pickle.load(f)
+pkl_path = 'models/6max_test_run/final_strategy_optimized.pkl'
 
-# Examine the strategy
-print(f"Number of information sets: {len(strategy_dict)}")
+with open(pkl_path, 'rb') as f:
+    strategy = pickle.load(f)
+
+with open('strategy.txt', 'w') as out_file:
+    out_file.write(str(strategy))
+
+print("Strategy dumped to strategy.txt")

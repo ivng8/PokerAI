@@ -2,7 +2,6 @@ import pickle
 import numpy as np
 import os
 
-from game_state import GameState
 from info_set_util import generate_key
 
 class MCCFRStrategy:
