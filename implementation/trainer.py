@@ -4,7 +4,7 @@ import numpy as np
 import time
 
 from infoset import InfoSet
-from action import ActionBucket
+from implementation.buckets.action import ActionBucket
 from info_set_util import generate_key
 
 class Trainer:

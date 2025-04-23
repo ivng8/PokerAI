@@ -1,6 +1,6 @@
 import random
 
-from game_state import GameState
+from implementation.game.game_state import GameState
 
 POS_NAMES = ["BTN", "SB", "BB", "LJ", "HJ", "CO"]
 

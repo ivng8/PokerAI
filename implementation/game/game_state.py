@@ -1,5 +1,5 @@
 import numpy as np
-from deck import Deck
+from implementation.items.deck import Deck
 from hand_eval import HandEvaluator
 from copy import deepcopy
 

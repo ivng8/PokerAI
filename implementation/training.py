@@ -4,8 +4,8 @@ import random
 import time
 import numpy as np
 
-from game_state import GameState
-from strategy import MCCFRStrategy
+from implementation.game.game_state import GameState
+from implementation.algo.strategy import MCCFRStrategy
 from trainer import Trainer
 
 class SelfTrainer:
