@@ -78,7 +78,6 @@ class Clustering:
             num_buckets = cls.NUM_FLOP_BUCKETS
             return num_buckets - 1
 
-        # Basic input validation
         if not hole_cards or len(hole_cards) != 2 or not community_cards:
             return num_buckets - 1
 
@@ -116,9 +115,8 @@ class Clustering:
             return 0
 
         normalized = (score - min_score) / (max_score - min_score)
-        # Invert: High score -> Low bucket index
         bucket = cls.NUM_PREFLOP_BUCKETS - 1 - int(np.clip(normalized, 0, 1) * (cls.NUM_PREFLOP_BUCKETS - 1))
-        return int(np.clip(bucket, 0, cls.NUM_PREFLOP_BUCKETS - 1))  # Ensure valid range
+        return int(np.clip(bucket, 0, cls.NUM_PREFLOP_BUCKETS - 1))
         
     @classmethod
     def simple_postflop_bucket(cls, hole_cards, community_cards, num_buckets):
@@ -176,7 +174,6 @@ class Clustering:
     
     @classmethod
     def extract_hand_type_features(cls, hole_cards, community_cards):
-        """ Extract binary hand type/draw features. """
         all_cards = hole_cards + community_cards
         n = len(all_cards)
         if n < 5:
@@ -195,13 +192,11 @@ class Clustering:
 
         h_fd = 1 if any(c == 4 for c in s_counts.values()) else 0
         h_sd = 0
-        if len(u_ranks) >= 4:
-            # Simplified OESD/Gutshot check
+        if len(u_ranks) > 3:
             for i in range(len(u_ranks) - 3):
-                if u_ranks[i] - u_ranks[i+3] <= 4:  # Check if 4 ranks span 4 or 5 positions
+                if u_ranks[i] - u_ranks[i+3] <= 4:
                     h_sd = 1
                     break
-            # Wheel draw check (A + 3 low cards)
             if not h_sd and 14 in u_ranks and len({r for r in u_ranks if r <= 5}) >= 3:
                 h_sd = 1
 
@@ -209,7 +204,6 @@ class Clustering:
     
     @classmethod
     def extract_board_features(cls, community_cards):
-        """ Extract numerical board features (paired, suited, connected). Returns tuple or raises error. """
         n = len(community_cards)
         if n < 3: return (0.0, 0.0, 0.0)
 
@@ -233,7 +227,6 @@ class Clustering:
              if not is_v_conn:
                  for i in range(len(u_ranks) - 2):
                       if u_ranks[i+2] - u_ranks[i] <= 3: is_m_conn = True; break
-             # Wheel check (Ace + 2 low cards) implies medium connectivity if not already higher
              if not is_v_conn and not is_m_conn and 14 in u_ranks and len({r for r in u_ranks if r <= 5}) >= 2:
                  is_m_conn = True
 
@@ -244,11 +237,10 @@ class Clustering:
     
     @staticmethod
     def calculate_hand_potential(hole_cards, community_cards, num_simulations=50):
-        """ Estimates Ppot, Npot via Monte Carlo. """
         current_hand = hole_cards + community_cards
         n_curr = len(current_hand)
         if n_curr < 5:
-            return 0.0, 0.0  # Cannot calculate potential pre-flop
+            return 0.0, 0.0
 
         curr_rank = HandEvaluator.evaluate_hand(current_hand)
 
@@ -256,10 +248,10 @@ class Clustering:
         deck_list = [Card(r, s) for r in range(2, 15) for s in Card.SUITS if Card(r,s) not in used_set]
         n_draw = max(0, 5 - len(community_cards))
         if n_draw == 0:
-            return 0.0, 0.0  # No potential on river
+            return 0.0, 0.0
 
-        if len(deck_list) < 2 + n_draw:  # Need opp hole cards + runout cards
-            return 0.0, 0.0  # Changed from raising an error to returning default values
+        if len(deck_list) < 2 + n_draw:
+            return 0.0, 0.0
 
         pp_wins, np_losses = 0, 0
         pp_count, np_count = 0, 0
@@ -280,7 +272,10 @@ class Clustering:
             opp_final_rank = HandEvaluator.evaluate_hand(opp_final)
 
             opp_curr = opp_hole + community_cards
-            opp_curr_rank = HandEvaluator.evaluate_hand(opp_curr) if len(opp_curr) >= 5 else (-1,[])
+            if len(opp_curr) >= 5:
+                opp_curr_rank = HandEvaluator.evaluate_hand(opp_curr)
+            else:
+                opp_curr_rank = (-1,[])
 
             is_ahead = curr_rank > opp_curr_rank
             is_behind = curr_rank < opp_curr_rank
@@ -299,50 +294,34 @@ class Clustering:
     
     @staticmethod
     def train_models(num_samples_preflop=20000, num_samples_postflop=50000, random_state=42, include_potential_in_features=False):
-        """
-        Trains K-Means clustering models for each street and saves them.
-        """
-        # Create model directory if it doesn't exist
         os.makedirs(Clustering.MODEL_DIR, exist_ok=True)
         trained_models = {}
         
-        # --- Preflop Model ---
         model_name = 'preflop'
         num_clusters = Clustering.NUM_PREFLOP_BUCKETS
         model_path = Clustering.preflop_model_path
         
-        # Generate data and train model
         preflop_data = Clustering.generate_synthetic_preflop_data(num_samples_preflop)
         if preflop_data:
-            preflop_kmeans = KMeans(
-                n_clusters=num_clusters,
-                random_state=random_state,
-                n_init=10
-            )
+            preflop_kmeans = KMeans(n_clusters=num_clusters, random_state=random_state, n_init=10)
             
             preflop_kmeans.fit(np.array(preflop_data))
             with open(model_path, 'wb') as f:
                 pickle.dump(preflop_kmeans, f)
             trained_models['preflop'] = preflop_kmeans
         
-        # --- Postflop Models ---
         postflop_configs = [
             ("Flop", 3, Clustering.NUM_FLOP_BUCKETS, Clustering.flop_model_path),
             ("Turn", 4, Clustering.NUM_TURN_BUCKETS, Clustering.turn_model_path),
             ("River", 5, Clustering.NUM_RIVER_BUCKETS, Clustering.river_model_path)
         ]
         
-        # Generate postflop data
         postflop_data = Clustering.generate_synthetic_postflop_data(5, num_samples_postflop, include_potential_in_features)
         
         if postflop_data:
             postflop_data_np = np.array(postflop_data)
             for round_name, num_comm, num_clusters, model_path in postflop_configs:
-                kmeans = KMeans(
-                    n_clusters=num_clusters,
-                    random_state=random_state,
-                    n_init=10
-                )
+                kmeans = KMeans(n_clusters=num_clusters, random_state=random_state, n_init=10)
                 
                 kmeans.fit(postflop_data_np)
                 with open(model_path, 'wb') as f:
@@ -353,18 +332,17 @@ class Clustering:
     
     @staticmethod
     def generate_synthetic_preflop_data(num_samples):
-        """ Generate features for random preflop hands. """
         data = []
         count = 0
         attempts = 0
         all_cards = [Card(r,s) for r in range(2, 15) for s in Card.SUITS]
-        max_attempts = num_samples * 5  # Allow more attempts
+        max_attempts = num_samples * 5
 
         while count < num_samples and attempts < max_attempts:
             attempts += 1
             c1, c2 = random.sample(all_cards, 2)
             features = Clustering.extract_preflop_features([c1, c2])
-            if features is not None:  # Keep basic validation
+            if features is not None:
                 data.append(features)
                 count += 1
 
@@ -372,15 +350,14 @@ class Clustering:
     
     @staticmethod
     def generate_synthetic_postflop_data(num_community_cards, num_samples, include_potential):
-        """ Generate features for random postflop hands/boards. """
         data = []
         count = 0
         all_cards = [Card(r,s) for r in range(2, 15) for s in Card.SUITS]
         cards_needed = 2 + num_community_cards
-        max_attempts = num_samples * 10  # Allow more attempts
+        max_attempts = num_samples * 10
 
         if len(all_cards) < cards_needed:
-            return []  # Not enough cards in deck
+            return []
 
         for _ in range(max_attempts):
             if count >= num_samples:
@@ -391,7 +368,7 @@ class Clustering:
             community = sampled_cards[2:]
             features = Clustering.extract_postflop_features(hole_cards, community, include_potential)
             
-            if features is not None:  # Keep basic validation
+            if features is not None:
                 data.append(features)
                 count += 1
 

@@ -5,7 +5,7 @@ from implementation.info_set_util import generate_key
 
 class DepthLimitedSearch:
 
-    def __init__(self, blueprint_strategy, search_depth=1, num_iterations=100, exploration_constant=1.414):
+    def __init__(self, blueprint_strategy, search_depth, num_iterations, exploration_constant=1.414):
         self.blueprint_strategy = blueprint_strategy
         self.search_depth = max(1, search_depth)
         self.num_iterations = max(10, num_iterations)
@@ -41,7 +41,6 @@ class DepthLimitedSearch:
             sim_state = game_state.clone()
             self.simulate(sim_state, player_idx, self.search_depth, initial_stacks)
 
-        # Choose Best Action (Most Visited)
         best_action = None
         max_visits = -1
 
@@ -55,19 +54,15 @@ class DepthLimitedSearch:
                 max_visits = visits
                 best_action = action
 
-        # Fallback if no visits
         if best_action is None:
             best_action = self.blueprint_strategy.get_action(game_state, player_idx)
             
-            # Ensure tuple format
             if isinstance(best_action, str):
                 best_action = (best_action, 0)
                 
-            # If not in available actions, use default strategy
             if best_action not in available_actions:
                 best_action = self.blueprint_strategy.default_strategy(available_actions)
 
-        # Ensure chosen action is available
         if best_action not in available_actions:
             if ('check', 0) in available_actions:
                 return ('check', 0)
@@ -84,22 +79,18 @@ class DepthLimitedSearch:
         return best_action
     
     def simulate(self, sim_state, player_idx_perspective, depth, initial_stacks):
-        # Base Cases: Terminal State
         if sim_state.is_terminal():
             utility_val = sim_state.get_utility(player_idx_perspective, initial_stacks)
             return float(utility_val) if isinstance(utility_val, (int, float)) and not (np.isnan(utility_val) or np.isinf(utility_val)) else 0.0
 
-        # Max Depth Reached
-        if depth <= 0:
+        if depth < 1:
             utility = self.blueprint_rollout(sim_state, player_idx_perspective, initial_stacks)
             return float(utility) if isinstance(utility, (int, float)) and not (np.isnan(utility) or np.isinf(utility)) else 0.0
 
-        # Identify acting player
         current_player_idx = sim_state.current_player_idx
         if not (0 <= current_player_idx < sim_state.num_players):
             return 0.0
 
-        # Handle inactive players by advancing state
         while True:
             is_player_valid = (0 <= current_player_idx < sim_state.num_players)
             is_player_active = False
@@ -124,40 +115,34 @@ class DepthLimitedSearch:
             else:
                 break
 
-        # Generate info set key
         info_set_key = generate_key(sim_state, current_player_idx)
         if not info_set_key:
             return 0.0
 
-        # Selection / Expansion
         node_visit_count = self.node_visits.get(info_set_key, -1)
 
-        if node_visit_count == -1:  # Expand new node
+        if node_visit_count == -1:
             self.node_visits[info_set_key] = 0
             value = self.blueprint_rollout(sim_state.clone(), player_idx_perspective, initial_stacks)
             value = float(value) if isinstance(value, (int, float)) and not (np.isnan(value) or np.isinf(value)) else 0.0
             self.node_visits[info_set_key] = 1
             return value
-        else:  # Node visited before, use UCB
+        else:
             available_actions = sim_state.get_available_actions()
             
             if not available_actions:
                 utility_val = sim_state.get_utility(player_idx_perspective, initial_stacks)
                 return float(utility_val) if isinstance(utility_val, (int, float)) and not (np.isnan(utility_val) or np.isinf(utility_val)) else 0.0
 
-            # Select action using UCB1
             chosen_action = self.select_action_ucb(info_set_key, available_actions)
             if not isinstance(chosen_action, tuple) or chosen_action not in available_actions:
                 chosen_action = self.blueprint_strategy.default_strategy(available_actions)
 
-        # Apply chosen action
         next_sim_state = sim_state.apply_action(chosen_action)
 
-        # Recursive simulation
         value = self.simulate(next_sim_state, player_idx_perspective, depth - 1, initial_stacks)
         value = float(value) if isinstance(value, (int, float)) and not (np.isnan(value) or np.isinf(value)) else 0.0
 
-        # Backpropagation
         action_key = self.get_action_key(info_set_key, chosen_action)
         if action_key:
             if action_key not in self.action_visits:
@@ -208,7 +193,10 @@ class DepthLimitedSearch:
                 best_ucb_score = ucb_score
                 best_action = action
 
-        return best_action if best_action else random.choice(available_actions)
+        if best_action:
+            return best_action
+        else:
+            return random.choice(available_actions)
     
     def blueprint_rollout(self, sim_state, player_idx_perspective, initial_stacks):
         rollout_depth = 0
@@ -252,7 +240,6 @@ class DepthLimitedSearch:
             sim_state = sim_state.apply_action(action)
             rollout_depth += 1
 
-        # Return final utility
         if sim_state.is_terminal():
             utility_val = sim_state.get_utility(player_idx_perspective, initial_stacks)
             return float(utility_val) if isinstance(utility_val, (int, float)) and not (np.isnan(utility_val) or np.isinf(utility_val)) else 0.0
@@ -268,7 +255,6 @@ class DepthLimitedSearch:
         if isinstance(action, str) and action in ['fold', 'check']:
             action_tuple = (action, 0)
         elif isinstance(action, tuple) and len(action) == 2 and isinstance(action[0], str):
-            # Convert action amount directly, assuming it will be valid
             amount = int(round(float(action[1])))
             action_tuple = (action[0], amount)
         else:
