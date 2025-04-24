@@ -6,7 +6,7 @@ import numpy as np
 
 from implementation.game_state import GameState
 from implementation.strategy import MCCFRStrategy
-from trainer import Trainer
+from implementation.trainer import Trainer
 
 class SelfTrainer:
 

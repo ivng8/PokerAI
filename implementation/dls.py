@@ -1,7 +1,7 @@
 import random
 import numpy as np
 
-from info_set_util import generate_key
+from implementation.info_set_util import generate_key
 
 class DepthLimitedSearch:
 

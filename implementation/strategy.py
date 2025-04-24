@@ -2,7 +2,7 @@ import pickle
 import numpy as np
 import os
 
-from info_set_util import generate_key
+from implementation.info_set_util import generate_key
 
 class MCCFRStrategy:
     

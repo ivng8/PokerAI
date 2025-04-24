@@ -1,6 +1,6 @@
 import pickle
 
-pkl_path = 'models/6max_test_run/final_strategy_optimized.pkl'
+pkl_path = 'models/final_strategy_optimized.pkl'
 
 with open(pkl_path, 'rb') as f:
     strategy = pickle.load(f)

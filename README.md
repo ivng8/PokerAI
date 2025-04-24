@@ -25,6 +25,6 @@ This repository contains a implementation of a No-Limit Hold'em (NLHE) poker bot
 Train a blueprint strategy using CFR.
 
 ```bash
-python main.py --iterations 5000 --checkpoint_freq 500
+python main.py --iterations 5000 --checkpoint_interval 500
 ```
 ```bash

@@ -1,13 +1,11 @@
 import os
-import sys
 import numpy as np
 import random
 import pickle
 from collections import Counter
-import time
 from sklearn.cluster import KMeans
 
-from hand_eval import HandEvaluator
+from implementation.hand_eval import HandEvaluator
 from implementation.card import Card
 
 class Clustering:
@@ -16,7 +14,7 @@ class Clustering:
     NUM_TURN_BUCKETS = 50
     NUM_RIVER_BUCKETS = 50
 
-    MODEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models'))
+    MODEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models'))
     preflop_model_path = os.path.join(MODEL_DIR, 'preflop_kmeans_model.pkl')
     flop_model_path = os.path.join(MODEL_DIR, 'flop_kmeans_model.pkl')
     turn_model_path = os.path.join(MODEL_DIR, 'turn_kmeans_model.pkl')
@@ -150,6 +148,11 @@ class Clustering:
         hp, htp, htr, hsd, hfd = cls.extract_hand_type_features(hole_cards, community_cards)
         
         features = [hand_strength, bp, bs, bc, float(hp), float(htp), float(htr), float(hsd), float(hfd)]
+
+        ppot, npot = 0.0, 0.0
+        ppot, npot = cls.calculate_hand_potential(hole_cards, community_cards)
+        
+        features.extend([ppot, npot])
         
         return features
     

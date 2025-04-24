@@ -114,7 +114,7 @@ class GameState:
         start_player = self.offset_from_dealer(1)
         current_deal_idx = start_player
         for _ in range(2):
-            for _ in range(len(self.num_players)):
+            for _ in range(self.num_players):
                 if current_deal_idx in self.active_players:
                     self.hole_cards[current_deal_idx].append(self.deck.deal())
 

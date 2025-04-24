@@ -7,7 +7,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train poker bot using self-play')
     parser.add_argument('--iterations', type=int, default=10000)
     parser.add_argument('--checkpoint_interval', type=int, default=1000)
-    parser.add_argument('--output_dir', type=str, default='../../models')
+    parser.add_argument('--output_dir', type=str, default='./models')
     parser.add_argument('--resume', type=str, default=None)
     
     args = parser.parse_args()
